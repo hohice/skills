@@ -1,0 +1,14 @@
+openai-whisper
+imagehash
+Pillow
+moviepy
+yt-dlp
+playwright
+PyYAML
+fpdf2
+
+# 可选：LLM 摘要器（rule 模式下不需要）
+# openai
+
+# 可选：OCR 智能选图（visual 模式下不需要）
+# easyocr
