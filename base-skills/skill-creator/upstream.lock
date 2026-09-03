@@ -1,0 +1,9 @@
+{
+  "files": {
+    "docs/skill-creation/best-practices.mdx": "a729bc1d746366ecb8c5056b100439fbf760007a0f836e089c0f3aff9ce5c2f8",
+    "docs/skill-creation/optimizing-descriptions.mdx": "5d6f72364f819399d07887843519d3ac037131778a5776584e5e6118d479a492",
+    "docs/specification.mdx": "b9079c0c10b7930e8c6a20ff2bc10cda2a3343c55185120e3f1116a1a529b220"
+  },
+  "ref": "main",
+  "repo": "agentskills/agentskills"
+}

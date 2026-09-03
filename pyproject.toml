@@ -1,0 +1,13 @@
+[project]
+name = "skills-collection"
+version = "0.1.0"
+description = "Personal collection of Agent Skills"
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,45 @@
+name: Sync upstream Agent Skills spec
+
+on:
+  schedule:
+    # Every Monday at 06:17 UTC (avoiding the top of the hour).
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Upstream git ref to sync from"
+        required: false
+        default: "main"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync upstream docs for skill-creator
+        run: |
+          REF="${{ github.event.inputs.ref || 'main' }}"
+          python base-skills/skill-creator/scripts/sync_upstream.py --ref "$REF" --skill-root base-skills/skill-creator
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore: sync upstream Agent Skills spec"
+          title: "Sync upstream Agent Skills spec"
+          body: |
+            This PR syncs the latest upstream specification and best-practice
+            documents into `base-skills/skill-creator/references/`.
+
+            See `base-skills/skill-creator/upstream.lock` for the exact upstream ref and file hashes.
+          branch: "sync/upstream-spec"
+          delete-branch: true

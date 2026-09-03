@@ -1,0 +1,5 @@
+my-skill/
+├── SKILL.md          # Required: metadata + instructions
+├── scripts/          # Optional: executable code
+├── references/       # Optional: documentation
+└── assets/           # Optional: templates, resources
