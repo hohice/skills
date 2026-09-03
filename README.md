@@ -7,6 +7,8 @@ This repository contains a collection of [Agent Skills](https://agentskills.io) 
 | Skill | Description |
 |---|---|
 | [skill-creator](base-skills/skill-creator) | Create, scaffold, and validate other Agent Skills. |
+| [okf-note-taking](knowledge-base-skills/okf-note-taking) | Take learning notes as an Open Knowledge Format (OKF) v0.2 bundle: linked markdown concepts, images, and generated indexes. |
+| [video-note-generator](knowledge-base-skills/video-note-generator) | Extract structured notes from video URLs (primarily Bilibili) as an OKF document with screenshots, an OKF bundle, or a PDF handout. |
 
 ## Quick start
 
@@ -54,6 +56,8 @@ This generates the `<available_skills>` XML block recommended for Anthropic mode
 │       ├── references/
 │       └── assets/
 └── knowledge-base-skills/  # Knowledge-base skills
+    ├── okf-note-taking/
+    └── video-note-generator/
 ```
 
 ## Keeping skill-creator up to date
