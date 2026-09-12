@@ -48,6 +48,16 @@ Add a bundle-relative link between notes.
 okf-notes link <from> --to <target> [--text "Link text"]
 ```
 
+Links are written as bundle-relative absolute paths (`/topics/neural-networks.md`), matching the OKF convention.
+
+### `move`
+
+Move or rename a concept note. Renames the file, moves its asset directory, rewrites links, and updates indexes and the log.
+
+```bash
+okf-notes move <from> <to>
+```
+
 ### `attach`
 
 Attach an image to a concept.
@@ -87,4 +97,4 @@ okf-notes log "Message" [--dir subdirectory] [--date YYYY-MM-DD]
 - Python >= 3.11
 - PyYAML >= 6.0
 
-Commands `init`, `new`, `log`, and `attach` (including `--record`) work with the standard library alone when invoked directly via `python scripts/okf_notes.py`. Commands `link`, `index`, and `check` require PyYAML.
+Commands `init`, `new`, `log`, and `attach` work with the standard library alone when invoked directly via `python scripts/okf_notes.py`. Commands `link`, `move`, `index`, and `check` require PyYAML.

@@ -11,7 +11,7 @@ from pathlib import Path
 
 def add_skill(repo_root: Path, skill_name: str) -> int:
     """Scaffold a new skill in the repository root."""
-    scaffold_script = repo_root / "base-skills" / "skill-creator" / "scripts" / "scaffold.py"
+    scaffold_script = repo_root / "skill-creator" / "scripts" / "scaffold.py"
 
     if not scaffold_script.exists():
         print(

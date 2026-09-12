@@ -12,20 +12,15 @@ from pathlib import Path
 def find_skill_directories(repo_root: Path) -> list[Path]:
     """Return skill directories that contain a SKILL.md or skill.md file.
 
-    Skills are organized under category directories (e.g. base-skills/,
-    knowledge-base-skills/) rather than at the repository root.
+    Skills live directly at the repository root, one directory per skill.
     """
-    skills: list[Path] = []
-    non_category_dirs = {"scripts", ".github"}
-    for category_dir in repo_root.iterdir():
-        if not category_dir.is_dir():
-            continue
-        if category_dir.name.startswith(".") or category_dir.name in non_category_dirs:
-            continue
-        for item in category_dir.iterdir():
-            if item.is_dir() and not item.name.startswith("."):
-                if (item / "SKILL.md").exists() or (item / "skill.md").exists():
-                    skills.append(item)
+    skills = [
+        item
+        for item in repo_root.iterdir()
+        if item.is_dir()
+        and not item.name.startswith(".")
+        and ((item / "SKILL.md").exists() or (item / "skill.md").exists())
+    ]
     return sorted(skills)
 
 

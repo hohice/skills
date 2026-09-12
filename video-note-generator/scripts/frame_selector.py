@@ -8,27 +8,52 @@
 
 import os
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
+from typing import Any, Iterator, List, Optional, Tuple
 
-import imagehash
 import numpy as np
 from PIL import Image
 
+try:
+    import imagehash
+except ImportError:  # pragma: no cover
+    imagehash = None  # type: ignore[assignment]
 
-def _frame_at_time(video_path: str, t: float) -> Image.Image:
-    """使用 moviepy 获取指定时间点的帧，自动限制在视频有效时长内。"""
+
+def _require_imagehash() -> Any:
+    if imagehash is None:
+        raise RuntimeError(
+            "VisualChangeSelector 需要 ImageHash，请运行：pip install ImageHash"
+        )
+    return imagehash
+
+
+def _sample_times(start_time: float, end_time: float, sample_count: int) -> List[float]:
+    duration = end_time - start_time
+    if duration <= 0 or sample_count <= 1:
+        return [start_time]
+    return [start_time + duration * i / (sample_count - 1) for i in range(sample_count)]
+
+
+def _iter_frames(
+    video_path: str, times: List[float]
+) -> Iterator[Tuple[float, Image.Image]]:
+    """Yield (time, frame) for each sampled time, opening the container once.
+
+    Frames that fail to decode are skipped.
+    """
     from moviepy import VideoFileClip
 
     clip = VideoFileClip(video_path)
     try:
         duration = float(clip.duration or 0)
-        if duration > 0:
-            # 留出少量边界，避免 moviepy 在最后一帧处回退警告
-            t = max(0.0, min(t, duration - 0.05))
-        frame = clip.get_frame(t)
+        for t in times:
+            bounded = max(0.0, min(t, duration - 0.05)) if duration > 0 else t
+            try:
+                yield bounded, Image.fromarray(clip.get_frame(bounded))
+            except Exception:
+                continue
     finally:
         clip.close()
-    return Image.fromarray(frame)
 
 
 def _brightness_variance(img: Image.Image) -> float:
@@ -79,25 +104,14 @@ class VisualChangeSelector(BaseFrameSelector):
         if not os.path.exists(video_path):
             return None
 
-        duration = end_time - start_time
-        if duration <= 0:
-            sample_times = [start_time]
-        else:
-            sample_times = [
-                start_time + duration * i / (sample_count - 1)
-                for i in range(sample_count)
-            ]
-
+        ih = _require_imagehash()
         candidates: List[Tuple[float, Image.Image, float]] = []
         prev_hash = None
 
-        for t in sample_times:
-            try:
-                img = _frame_at_time(video_path, t)
-            except Exception:
-                continue
-
-            current_hash = imagehash.phash(img)
+        for t, img in _iter_frames(
+            video_path, _sample_times(start_time, end_time, sample_count)
+        ):
+            current_hash = ih.phash(img)
             change_score = 0
             if prev_hash is not None:
                 change_score = abs(current_hash - prev_hash)
@@ -152,23 +166,12 @@ class OCRFrameSelector(BaseFrameSelector):
         if not os.path.exists(video_path):
             return None
 
-        duration = end_time - start_time
-        if duration <= 0:
-            sample_times = [start_time]
-        else:
-            sample_times = [
-                start_time + duration * i / (sample_count - 1)
-                for i in range(sample_count)
-            ]
-
         candidates: List[Tuple[float, Image.Image, int]] = []
-        for t in sample_times:
-            try:
-                img = _frame_at_time(video_path, t)
-                score = self._text_score(img)
-                candidates.append((t, img, score))
-            except Exception:
-                continue
+        for t, img in _iter_frames(
+            video_path, _sample_times(start_time, end_time, sample_count)
+        ):
+            score = self._text_score(img)
+            candidates.append((t, img, score))
 
         if not candidates:
             return None

@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,6 +63,35 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# YAML indicator characters that may not start a plain scalar, plus the
+# flow-collection separators that are unsafe inside `[...]` / `{...}`.
+_YAML_INDICATORS = set("-?:,[]{}#&*!|>'\"%@`")
+_YAML_WORDS = {"null", "~", "true", "false", "yes", "no", "on", "off"}
+
+
+def yaml_scalar(value: Any) -> str:
+    """Render a value as a safe YAML scalar without requiring PyYAML.
+
+    Strings stay plain when unambiguous; anything risky (indicators, flow
+    separators, ``": "``, ``" #"``, newlines, bool/null lookalikes, numbers)
+    is double-quoted with escaping.
+    """
+    s = str(value)
+    if (
+        s
+        and s == s.strip()
+        and s[0] not in _YAML_INDICATORS
+        and ": " not in s
+        and " #" not in s
+        and not any(ch in s for ch in "[]{},\n\t")
+        and s.lower() not in _YAML_WORDS
+        and not re.fullmatch(r"[-+]?(\d+(\.\d*)?|\.\d+)", s)
+    ):
+        return s
+    escaped = s.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def require_yaml() -> None:
     if yaml is None:
         print(
@@ -99,7 +129,7 @@ def build_concept(
     tags: list[str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     tags = tags or []
-    tags_yaml = "[" + ", ".join(tags) + "]" if tags else "[]"
+    tags_yaml = "[" + ", ".join(yaml_scalar(t) for t in tags) + "]"
     desc = description or title
     meta: dict[str, Any] = {
         "type": concept_type,
@@ -110,12 +140,12 @@ def build_concept(
         "generated": {"by": ACTOR, "at": now_iso()},
     }
     content = f"""---
-type: {concept_type}
-title: {title}
-description: {desc}
+type: {yaml_scalar(concept_type)}
+title: {yaml_scalar(title)}
+description: {yaml_scalar(desc)}
 tags: {tags_yaml}
 status: draft
-generated: {{ by: {ACTOR}, at: {now_iso()} }}
+generated: {{ by: {yaml_scalar(ACTOR)}, at: {yaml_scalar(now_iso())} }}
 ---
 
 # Summary
@@ -164,8 +194,8 @@ def update_index(index_path: Path, title: str, rel_path: str, description: str) 
     entry = f"* [{title}]({rel_path}) - {description}\n"
     if index_path.exists():
         text = index_path.read_text(encoding="utf-8")
-        # Avoid duplicate links
-        if rel_path in text:
+        # Avoid duplicate entries: match the exact link target, not substrings.
+        if re.search(r"\]\(" + re.escape(rel_path) + r"\)", text):
             return
     else:
         text = f"# {index_path.parent.name or 'Index'}\n\n"
@@ -226,12 +256,14 @@ def cmd_link(args: argparse.Namespace) -> int:
         return 1
 
     text = source.read_text(encoding="utf-8")
-    meta, body = split_frontmatter(text) or ({}, text)
+    meta, body = split_frontmatter(text)
+    meta = meta or {}
     target_title = args.text or target.stem.replace("-", " ").replace("_", " ").title()
 
     # Try to read target title if it exists
     if target.exists():
-        tmeta, _ = split_frontmatter(target.read_text(encoding="utf-8")) or ({}, "")
+        tmeta, _ = split_frontmatter(target.read_text(encoding="utf-8"))
+        tmeta = tmeta or {}
         target_title = tmeta.get("title") or target_title
 
     # Preserve original frontmatter text to avoid reformatting timestamps/tags.
@@ -241,11 +273,10 @@ def cmd_link(args: argparse.Namespace) -> int:
     else:
         frontmatter_text = ""
 
-    # Use a bundle-relative link when possible.
-    try:
-        link_path = target.relative_to(source.parent).as_posix()
-    except ValueError:
-        link_path = target.as_posix()
+    # Use a bundle-relative absolute link, the OKF convention documented in
+    # SKILL.md (`[text](/path/from/bundle/root)`). Paths are bundle-relative
+    # because every command runs from the bundle root.
+    link_path = "/" + target.as_posix().lstrip("/")
     link = f"[{target_title}]({link_path})"
     section = "# Related notes\n\n"
 
@@ -254,7 +285,10 @@ def cmd_link(args: argparse.Namespace) -> int:
     else:
         body = body.rstrip("\n") + "\n\n" + section + f"- {link}\n\n"
 
-    source.write_text(frontmatter_text + "\n" + body, encoding="utf-8")
+    if frontmatter_text:
+        source.write_text(frontmatter_text + "\n\n" + body, encoding="utf-8")
+    else:
+        source.write_text(body, encoding="utf-8")
     print(f"linked: {source} -> {target}")
     return 0
 
@@ -325,10 +359,19 @@ def cmd_index(args: argparse.Namespace) -> int:
         if index_path.exists() and not args.regenerate:
             continue
 
+        # Preserve an existing frontmatter block (e.g. okf_version on the root
+        # index.md) instead of wiping curated content on regenerate.
+        existing_frontmatter = ""
+        if index_path.exists():
+            split = split_text_frontmatter(index_path.read_text(encoding="utf-8"))
+            if split is not None:
+                existing_frontmatter = split[0] + "\n\n"
+
         lines = [f"# {d.name or 'Index'}", ""]
         concepts = sorted(p for p in d.iterdir() if is_concept(p))
         for concept in concepts:
-            meta, _ = split_frontmatter(concept.read_text(encoding="utf-8")) or ({}, "")
+            meta, _ = split_frontmatter(concept.read_text(encoding="utf-8"))
+            meta = meta or {}
             title = meta.get("title") or concept.stem
             desc = meta.get("description", "")
             lines.append(f"* [{title}]({concept.name}) - {desc}".rstrip(" -"))
@@ -339,7 +382,9 @@ def cmd_index(args: argparse.Namespace) -> int:
             for sd in subdirs:
                 lines.append(f"* [{sd.name}]({sd.name}/)")
 
-        index_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        index_path.write_text(
+            existing_frontmatter + "\n".join(lines) + "\n", encoding="utf-8"
+        )
         print(f"generated: {index_path}")
     return 0
 
@@ -396,6 +441,127 @@ def cmd_log(args: argparse.Namespace) -> int:
     return 0
 
 
+_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+
+
+def _map_link_targets(text: str, mapper: Any) -> str:
+    """Rewrite markdown link targets through mapper(target) -> new target | None."""
+
+    def repl(m: re.Match[str]) -> str:
+        label, target = m.group(1), m.group(2)
+        if re.match(r"^[a-z][a-z0-9+.-]*://", target, re.IGNORECASE):
+            return m.group(0)
+        new_target = mapper(target)
+        if new_target is None:
+            return m.group(0)
+        return f"[{label}]({new_target})"
+
+    return _LINK_RE.sub(repl, text)
+
+
+def cmd_move(args: argparse.Namespace) -> int:
+    require_yaml()
+    src = Path(args.from_path)
+    dst = Path(args.to)
+    if not src.exists():
+        print(f"error: source does not exist: {src}", file=sys.stderr)
+        return 1
+    if dst.exists():
+        print(f"error: destination already exists: {dst}", file=sys.stderr)
+        return 1
+
+    src_norm = os.path.normpath(src.as_posix())
+    new_abs = "/" + dst.as_posix().lstrip("/")
+    old_asset_dir = Path("assets") / src.with_suffix("")
+    new_asset_dir = Path("assets") / dst.with_suffix("")
+    old_asset_norm = os.path.normpath(str(old_asset_dir))
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(dst)
+
+    # Keep attached media next to the concept: assets/<old-path>/ -> assets/<new-path>/
+    asset_moved = False
+    if old_asset_dir.exists() and not new_asset_dir.exists():
+        new_asset_dir.parent.mkdir(parents=True, exist_ok=True)
+        old_asset_dir.rename(new_asset_dir)
+        asset_moved = True
+    new_asset_norm = os.path.normpath(str(new_asset_dir))
+
+    # Fix relative links inside the moved document (directory depth may change,
+    # and its asset directory may have moved with it).
+    def fix_own_links(target: str) -> str | None:
+        path_part, _, anchor = target.partition("#")
+        if not path_part or path_part.startswith("/"):
+            return None
+        # Links were authored from the old location; resolve there first.
+        resolved = os.path.normpath(str(src.parent / path_part))
+        if asset_moved and (
+            resolved == old_asset_norm
+            or resolved.startswith(old_asset_norm + os.sep)
+        ):
+            resolved = new_asset_norm + resolved[len(old_asset_norm):]
+        rel = Path(os.path.relpath(resolved, dst.parent)).as_posix()
+        return rel + (f"#{anchor}" if anchor else "")
+
+    dst.write_text(
+        _map_link_targets(dst.read_text(encoding="utf-8"), fix_own_links),
+        encoding="utf-8",
+    )
+
+    # Repoint every bundle-absolute link to the old location at the new one.
+    def fix_refs(target: str) -> str | None:
+        path_part, _, anchor = target.partition("#")
+        suffix = f"#{anchor}" if anchor else ""
+        if not path_part:
+            return None
+        if path_part.startswith("/"):
+            if os.path.normpath(path_part.lstrip("/")) == src_norm:
+                return new_abs + suffix
+            return None
+        if os.path.normpath(path_part) == src_norm:
+            return new_abs + suffix
+        return None
+
+    for md in sorted(Path(".").rglob("*.md")):
+        if md == dst or md.name in RESERVED:
+            continue
+        text = md.read_text(encoding="utf-8")
+        new_text = _map_link_targets(text, fix_refs)
+        if new_text != text:
+            md.write_text(new_text, encoding="utf-8")
+            print(f"updated links: {md}")
+
+    # Update directory indexes: drop the old entry, add the new one.
+    old_index = src.parent / "index.md"
+    if old_index.exists():
+        text = old_index.read_text(encoding="utf-8")
+        new_text = re.sub(
+            r"^.*\]\(" + re.escape(src.name) + r"\).*\n",
+            "",
+            text,
+            flags=re.MULTILINE,
+        )
+        if new_text != text:
+            old_index.write_text(new_text, encoding="utf-8")
+            print(f"updated: {old_index}")
+    meta, _ = split_frontmatter(dst.read_text(encoding="utf-8"))
+    meta = meta or {}
+    title = meta.get("title") or dst.stem
+    new_index = dst.parent / "index.md"
+    update_index(new_index, title=title, rel_path=dst.name,
+                 description=meta.get("description", ""))
+    print(f"updated: {new_index}")
+
+    log_path = Path("log.md")
+    ensure_log_entry(
+        log_path,
+        f"**Move**: [{title}]({relative_to_log(log_path, dst)}) "
+        f"(was {src.as_posix()}).",
+    )
+    print(f"moved: {src} -> {dst}")
+    return 0
+
+
 def cmd_attach(args: argparse.Namespace) -> int:
     source = Path(args.concept)
     image = Path(args.file)
@@ -427,8 +593,6 @@ def cmd_attach(args: argparse.Namespace) -> int:
         dest = asset_dir / f"{stem}-{counter}{suffix}"
         counter += 1
 
-    import shutil
-
     shutil.copy2(image, dest)
 
     # Path from concept file to image (relative for body)
@@ -441,12 +605,29 @@ def cmd_attach(args: argparse.Namespace) -> int:
     if args.record:
         if bundle_path not in frontmatter_text:
             inner = frontmatter_text[:-3].rstrip("\n")
-            if "assets:" in inner:
-                lines = inner.splitlines()
-                for i, line in enumerate(lines):
-                    if line.strip() == "assets:":
-                        lines.insert(i + 1, f"- {bundle_path}")
-                        break
+            lines = inner.splitlines()
+            block_idx = next(
+                (i for i, line in enumerate(lines) if line.strip() == "assets:"),
+                None,
+            )
+            inline = next(
+                (
+                    i
+                    for i, line in enumerate(lines)
+                    if re.match(r"^\s*assets:\s*\[.*\]\s*$", line)
+                ),
+                None,
+            )
+            if block_idx is not None:
+                lines.insert(block_idx + 1, f"- {bundle_path}")
+                inner = "\n".join(lines) + "\n"
+            elif inline is not None:
+                m = re.match(r"^(\s*assets:\s*)\[(.*)\]\s*$", lines[inline])
+                existing_items = m.group(2).strip()
+                if existing_items:
+                    lines[inline] = f"{m.group(1)}[{existing_items}, {bundle_path}]"
+                else:
+                    lines[inline] = f"{m.group(1)}[{bundle_path}]"
                 inner = "\n".join(lines) + "\n"
             else:
                 inner += f"\nassets:\n- {bundle_path}\n"
@@ -458,7 +639,10 @@ def cmd_attach(args: argparse.Namespace) -> int:
         image_line += f"*{caption}*\n\n"
 
     body = body.rstrip("\n") + "\n\n" + image_line
-    source.write_text(frontmatter_text + "\n" + body, encoding="utf-8")
+    if frontmatter_text:
+        source.write_text(frontmatter_text + "\n\n" + body, encoding="utf-8")
+    else:
+        source.write_text(body, encoding="utf-8")
     print(f"attached: {dest} -> {source}")
     if args.record:
         print(f"recorded: {bundle_path} in frontmatter assets")
@@ -598,6 +782,11 @@ def main(argv: list[str] | None = None) -> int:
     link.add_argument("--to", required=True)
     link.add_argument("--text", default=None)
     link.set_defaults(func=cmd_link)
+
+    mv = sub.add_parser("move", help="move or rename a concept note and fix links")
+    mv.add_argument("from_path")
+    mv.add_argument("to")
+    mv.set_defaults(func=cmd_move)
 
     idx = sub.add_parser("index", help="generate or update index.md files")
     idx.add_argument("--regenerate", action="store_true")

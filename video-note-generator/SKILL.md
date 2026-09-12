@@ -3,7 +3,7 @@ name: video-note-generator
 description: Extract structured notes from video URLs, primarily Bilibili, and output them as a single OKF document with embedded screenshots by default. Also supports an OKF v0.2 note bundle or a single PDF study handout. Probes online subtitles first, falls back to Whisper ASR and visual slide detection, then summarizes content into sections.
 compatibility: Python 3.12+, macOS recommended, requires `playwright install chromium` and Whisper model download on first run
 metadata:
-  version: "0.6.0"
+  version: "0.7.0"
 ---
 
 # video-note-generator
@@ -11,6 +11,16 @@ metadata:
 Generate structured notes from a video URL. By default this produces a **single OKF document with embedded screenshots**. You can also choose an **OKF v0.2 note bundle** or a **single PDF study handout**.
 
 ## Steps
+
+0. One-time setup (skip if already done):
+
+   ```bash
+   python3.12 -m venv .venv && source .venv/bin/activate
+   pip install -r ${KIMI_SKILL_DIR}/requirements.txt
+   playwright install chromium   # required for the subtitle probe
+   ```
+
+   The Whisper model downloads automatically on first ASR use.
 
 1. Run the main script from the skill directory:
 
@@ -20,7 +30,7 @@ Generate structured notes from a video URL. By default this produces a **single 
 
    By default this produces a single OKF document. Add `--output-format pdf` for a PDF, or `--output-format okf` for an OKF note bundle.
 
-2. Wait for it to finish. It outputs files next to `<title>` (the video's display title):
+2. Wait for it to finish — this can take a while (see "Runtime expectations" below). It outputs files next to `<title>` (the video's display title):
    - `<title>.json` — raw slide/time/content notes
    - `<title>_summary.json` — structured section summaries
    - `<title>_llm_prompt.md` — a prompt you can feed to an LLM for a better summary
@@ -32,6 +42,20 @@ Generate structured notes from a video URL. By default this produces a **single 
 
 3. Report the result to the user: video title, number of raw slides, number of summary sections, and the chosen output path (OKF doc path, OKF bundle dir, or PDF path).
 
+## Runtime expectations
+
+- The script prints `[*]` progress lines (in Chinese) as it works. Do not interrupt it; ASR on a long video can take tens of minutes even after the download finishes.
+- Phase 1 (subtitle probe) takes ~10–30 s. Phase 2 (download + Whisper ASR + visual slide detection) dominates the runtime and scales with video length.
+- `./browser_data/`, `./downloads/`, and `./screenshots/` are created in the working directory and reused across runs.
+
+## Gotchas
+
+- Screenshots require the video file. If Phase 1 grabs online subtitles, the video is never downloaded, so okf-doc/PDF outputs are text-only unless you re-run without subtitles (or delete the cached `output.json`) so the ASR fallback downloads the video.
+- Visual slide-change detection is tuned for slide/lecture-style videos; talking-head or vlog-style footage produces noisy section boundaries.
+- Some sites detect headless browsers and return 412. If the subtitle probe and download both fail, retry with `--no-headless` (a browser window will open).
+- OKF bundle mode (`--output-format okf`) requires the sibling `okf-note-taking` skill; the other formats do not. Re-running overwrites notes with the same slug instead of creating `-1` duplicates.
+- The rule summarizer applies no built-in typo corrections by default (a global table can corrupt other videos' transcripts). Pass per-video fixes with `--corrections corrections.json` (see `references/asr-corrections.example.json`).
+
 ## Arguments
 
 - `url` (positional, required): Video URL.
@@ -42,6 +66,8 @@ Generate structured notes from a video URL. By default this produces a **single 
 - `--granularity {video,section}`: OKF bundle mode only — topic note granularity. Default `video` (one topic note for the whole video); use `section` to create one topic note per summary section.
 - `--frame-selector-method {visual,ocr}`: PDF / okf-doc mode only — frame selection strategy, default `visual`. Install `easyocr` to use `ocr`.
 - `--whisper-model`: Whisper model size, default `base`.
+- `--corrections`: path to a JSON `{"typo": "fix"}` table applied to the ASR transcript before summarizing. Default: none. See `references/asr-corrections.example.json`.
+- `--no-headless`: run the browser visibly; helps when sites block headless browsers (412 errors).
 
 ## LLM-enhanced summary
 
@@ -64,6 +90,8 @@ If the user asks for a higher-quality summary:
 ## Output reuse
 
 Downloaded videos are cached in `./downloads/` relative to the working directory. Re-running the same URL reuses the cached video. Use `--reuse-existing` to also reuse `output.json`.
+
+In OKF bundle mode, re-running overwrites topic notes with the same slug in place (idempotent); it no longer creates `<slug>-1` duplicates.
 
 ## OKF bundle layout (okf mode)
 

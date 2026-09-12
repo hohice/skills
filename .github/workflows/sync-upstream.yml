@@ -29,7 +29,7 @@ jobs:
       - name: Sync upstream docs for skill-creator
         run: |
           REF="${{ github.event.inputs.ref || 'main' }}"
-          python base-skills/skill-creator/scripts/sync_upstream.py --ref "$REF" --skill-root base-skills/skill-creator
+          python skill-creator/scripts/sync_upstream.py --ref "$REF" --skill-root skill-creator
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
@@ -38,8 +38,8 @@ jobs:
           title: "Sync upstream Agent Skills spec"
           body: |
             This PR syncs the latest upstream specification and best-practice
-            documents into `base-skills/skill-creator/references/`.
+            documents into `skill-creator/references/`.
 
-            See `base-skills/skill-creator/upstream.lock` for the exact upstream ref and file hashes.
+            See `skill-creator/upstream.lock` for the exact upstream ref and file hashes.
           branch: "sync/upstream-spec"
           delete-branch: true

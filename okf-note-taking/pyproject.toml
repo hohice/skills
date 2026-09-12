@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "okf-note-taking"
-version = "0.2.0"
+version = "0.3.0"
 description = "A skill and CLI helper for maintaining learning notes in the Open Knowledge Format (OKF) v0.2."
 readme = "README.md"
 license = { text = "Apache-2.0" }

@@ -32,7 +32,7 @@ python scripts/scaffold.py <skill-name> <target-directory>
 Example from the repository root:
 
 ```bash
-python base-skills/skill-creator/scripts/scaffold.py my-new-skill ./my-new-skill
+python skill-creator/scripts/scaffold.py my-new-skill ./my-new-skill
 ```
 
 If this skill lives in a skills collection repository, you can also use the root-level helper:
@@ -125,7 +125,7 @@ Structure your skill to take advantage of this. Put the essential workflow in `S
 The reference documents in `references/` are synced from the upstream agentskills/agentskills repository. To update them manually from the repository root:
 
 ```bash
-python base-skills/skill-creator/scripts/sync_upstream.py --skill-root base-skills/skill-creator
+python skill-creator/scripts/sync_upstream.py --skill-root skill-creator
 ```
 
 A root-level GitHub Actions workflow (`.github/workflows/sync-upstream.yml`) also opens a pull request automatically when the upstream specification changes.

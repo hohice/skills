@@ -6,9 +6,9 @@ This repository contains a collection of [Agent Skills](https://agentskills.io) 
 
 | Skill | Description |
 |---|---|
-| [skill-creator](base-skills/skill-creator) | Create, scaffold, and validate other Agent Skills. |
-| [okf-note-taking](knowledge-base-skills/okf-note-taking) | Take learning notes as an Open Knowledge Format (OKF) v0.2 bundle: linked markdown concepts, images, and generated indexes. |
-| [video-note-generator](knowledge-base-skills/video-note-generator) | Extract structured notes from video URLs (primarily Bilibili) as an OKF document with screenshots, an OKF bundle, or a PDF handout. |
+| [skill-creator](skill-creator) | Create, scaffold, and validate other Agent Skills. |
+| [okf-note-taking](okf-note-taking) | Take learning notes as an Open Knowledge Format (OKF) v0.2 bundle: linked markdown concepts, images, and generated indexes. |
+| [video-note-generator](video-note-generator) | Extract structured notes from video URLs (primarily Bilibili) as an OKF document with screenshots, an OKF bundle, or a PDF handout. |
 
 ## Quick start
 
@@ -49,15 +49,9 @@ This generates the `<available_skills>` XML block recommended for Anthropic mode
 │   └── workflows/
 │       ├── validate-skills.yml   # CI validation
 │       └── sync-upstream.yml     # Sync upstream spec for skill-creator
-├── base-skills/            # Core skills
-│   └── skill-creator/
-│       ├── SKILL.md
-│       ├── scripts/
-│       ├── references/
-│       └── assets/
-└── knowledge-base-skills/  # Knowledge-base skills
-    ├── okf-note-taking/
-    └── video-note-generator/
+├── skill-creator/          # Core skill: create, scaffold, and validate other skills
+├── okf-note-taking/        # Knowledge-base skill: OKF learning notes
+└── video-note-generator/   # Knowledge-base skill: notes from video URLs
 ```
 
 ## Keeping skill-creator up to date
@@ -67,7 +61,7 @@ The `skill-creator` skill includes reference documents synced from the upstream 
 To sync manually:
 
 ```bash
-python base-skills/skill-creator/scripts/sync_upstream.py --skill-root base-skills/skill-creator
+python skill-creator/scripts/sync_upstream.py --skill-root skill-creator
 ```
 
 A GitHub Actions workflow also opens a pull request automatically every Monday when the upstream specification changes.

@@ -12,6 +12,7 @@ It treats every note as an OKF **concept** (a markdown file with YAML frontmatte
 - **Bundle scaffolding** via `init` with `topics/`, `references/`, `computations/` and their indexes.
 - **Concept creation** via `new` that auto-updates the nearest `index.md` and `log.md`.
 - **Linking** via `link` to insert bundle-relative links in `# Related notes`.
+- **Moving/renaming** via `move` that renames the note, relocates its assets, rewrites links, and updates indexes and the log.
 - **Image attachment** via `attach` that copies media into `assets/` and optionally records it in frontmatter.
 - **Index regeneration** via `index` to keep directory listings up to date.
 - **Conformance checks** via `check` for frontmatter, footnotes, local images, and reserved filenames.
@@ -28,7 +29,7 @@ okf-note-taking/
   README_CN.md          # Chinese version of this README
   pyproject.toml        # Python package metadata
   scripts/
-    okf_notes.py        # CLI helper (init, new, link, attach, index, check, log, lfs-setup)
+    okf_notes.py        # CLI helper (init, new, link, move, attach, index, check, log, lfs-setup)
   references/
     WORKFLOW.md         # Detailed step-by-step workflows
     COMMANDS.md         # CLI command reference
@@ -155,7 +156,7 @@ okf-notes check
 - Python >= 3.11
 - PyYAML >= 6.0
 
-The core commands `init`, `new`, `log`, and `attach` only require the Python standard library when invoked directly via `python scripts/okf_notes.py`. Commands `link`, `index`, and `check` require PyYAML.
+The core commands `init`, `new`, `log`, and `attach` only require the Python standard library when invoked directly via `python scripts/okf_notes.py`. Commands `link`, `move`, `index`, and `check` require PyYAML.
 
 ---
 

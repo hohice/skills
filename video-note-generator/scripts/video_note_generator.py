@@ -29,23 +29,37 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import imagehash
-import imageio_ffmpeg
+# 重量级依赖全部惰性导入：缺失时只在真正用到该阶段才报错，
+# 避免某个未安装依赖拖垮整个 CLI（例如只用字幕路径却要求装 whisper）。
+try:
+    import imagehash
+except ImportError:  # pragma: no cover
+    imagehash = None  # type: ignore[assignment]
 
-# Whisper 调用 ffmpeg 命令时需要它在 PATH 中
-_ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
-_ffmpeg_dir = os.path.dirname(_ffmpeg_bin)
-if _ffmpeg_dir and os.path.exists(_ffmpeg_dir):
-    os.environ["PATH"] = _ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
-    # imageio_ffmpeg 提供的二进制文件名带平台后缀，Whisper 只认 "ffmpeg"
-    _ffmpeg_link = os.path.join(_ffmpeg_dir, "ffmpeg")
-    if not shutil.which("ffmpeg") and not os.path.exists(_ffmpeg_link):
-        os.symlink(_ffmpeg_bin, _ffmpeg_link)
+try:
+    import imageio_ffmpeg
+except ImportError:  # pragma: no cover
+    imageio_ffmpeg = None  # type: ignore[assignment]
 
-import whisper
-from PIL import Image
-from moviepy import VideoFileClip
-from playwright.sync_api import sync_playwright
+try:
+    import whisper
+except ImportError:  # pragma: no cover
+    whisper = None  # type: ignore[assignment]
+
+try:
+    from PIL import Image
+except ImportError:  # pragma: no cover
+    Image = None  # type: ignore[assignment]
+
+try:
+    from moviepy import VideoFileClip
+except ImportError:  # pragma: no cover
+    VideoFileClip = None  # type: ignore[assignment]
+
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:  # pragma: no cover
+    sync_playwright = None  # type: ignore[assignment]
 
 import frame_selector
 import summarizers
@@ -61,9 +75,23 @@ except ImportError:  # pragma: no cover
     yt_dlp = None
 
 
+# Whisper 调用 ffmpeg 命令时需要它在 PATH 中
+if imageio_ffmpeg is not None:
+    _ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
+    _ffmpeg_dir = os.path.dirname(_ffmpeg_bin)
+    if _ffmpeg_dir and os.path.exists(_ffmpeg_dir):
+        os.environ["PATH"] = _ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+        # imageio_ffmpeg 提供的二进制文件名带平台后缀，Whisper 只认 "ffmpeg"
+        _ffmpeg_link = os.path.join(_ffmpeg_dir, "ffmpeg")
+        if not shutil.which("ffmpeg") and not os.path.exists(_ffmpeg_link):
+            os.symlink(_ffmpeg_bin, _ffmpeg_link)
+
+
 # OKF note-taking skill CLI helper path (sibling skill directory)
 _OKF_SKILL_DIR = Path(__file__).resolve().parent.parent.parent / "okf-note-taking"
 OKF_NOTES_CLI = _OKF_SKILL_DIR / "scripts" / "okf_notes.py"
+
+_okf_notes_module: Optional[Any] = None
 
 
 def _load_okf_notes() -> Any:
@@ -76,7 +104,26 @@ def _load_okf_notes() -> Any:
     return module
 
 
-okf_notes = _load_okf_notes()
+def _get_okf_notes() -> Any:
+    """惰性加载 OKF helper：只有输出 OKF 笔记包时才需要 sibling skill。"""
+    global _okf_notes_module
+    if _okf_notes_module is None:
+        if not OKF_NOTES_CLI.exists():
+            raise RuntimeError(
+                "OKF 笔记包输出需要 okf-note-taking skill，但未找到："
+                f"{OKF_NOTES_CLI}。请安装该 skill，或改用 --output-format okf-doc / pdf。"
+            )
+        _okf_notes_module = _load_okf_notes()
+    return _okf_notes_module
+
+
+def _require_deps(*deps: Tuple[Any, str]) -> None:
+    """Raise with install hints if any of the (module, package) pairs is missing."""
+    missing = [pkg for mod, pkg in deps if mod is None]
+    if missing:
+        raise RuntimeError(
+            "缺少依赖：" + "、".join(missing) + "。请运行：pip install " + " ".join(missing)
+        )
 
 
 def _now_iso() -> str:
@@ -99,9 +146,9 @@ def _build_concept_document(meta: Dict[str, Any], body: str = "") -> str:
     """把 frontmatter 和 body 组装成完整 OKF 概念文档。
 
     实际序列化逻辑复用 okf-note-taking/scripts/okf_notes.py 中的实现，
-    保证两个 skill 产出的 frontmatter 风格一致。
+    保证两个 skill 产出的 frontmatter 风格一致。该模块按需惰性加载。
     """
-    return okf_notes.build_concept_document(meta, body, flow_style=False)
+    return _get_okf_notes().build_concept_document(meta, body, flow_style=False)
 
 
 class VideoNoteGenerator:
@@ -130,6 +177,7 @@ class VideoNoteGenerator:
         screenshot_dir: str = "./screenshots",
         reuse_existing: bool = False,
         granularity: str = "video",
+        summarizer_corrections: Optional[Dict[str, str]] = None,
     ):
         self.video_url = video_url
         self.output_path = output_path
@@ -147,6 +195,7 @@ class VideoNoteGenerator:
         self.reuse_existing = reuse_existing
         self.granularity = granularity.lower()
         self._notes_dir_override = notes_dir
+        self._summarizer_corrections = summarizer_corrections or {}
 
         self.subtitle_data: Optional[List[Dict[str, Any]]] = None
         self.video_path: Optional[str] = None
@@ -249,7 +298,9 @@ class VideoNoteGenerator:
 
     def _get_summarizer(self) -> summarizers.BaseSummarizer:
         if self._summarizer is None:
-            self._summarizer = summarizers.create_summarizer(self.summarizer_method)
+            self._summarizer = summarizers.create_summarizer(
+                self.summarizer_method, corrections=self._summarizer_corrections
+            )
         return self._summarizer
 
     def _get_frame_selector(self) -> frame_selector.BaseFrameSelector:
@@ -346,7 +397,6 @@ class VideoNoteGenerator:
             "format": "bestvideo[height<=720][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=720]",
             "outtmpl": os.path.join(self.download_dir, "%(id)s.%(ext)s"),
             "merge_output_format": "mp4",
-            "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
             "quiet": False,
             "no_warnings": False,
             "noplaylist": True,
@@ -363,6 +413,8 @@ class VideoNoteGenerator:
                 ),
             },
         }
+        if imageio_ffmpeg is not None:
+            base_opts["ffmpeg_location"] = imageio_ffmpeg.get_ffmpeg_exe()
 
         last_exc: Optional[Exception] = None
         info: Optional[Dict[str, Any]] = None
@@ -416,6 +468,7 @@ class VideoNoteGenerator:
 
     def _transcribe_audio(self, video_path: str) -> List[Dict[str, Any]]:
         """使用 OpenAI Whisper 转写视频音频。"""
+        _require_deps((whisper, "openai-whisper"))
         print(f"[*] 加载 Whisper 模型：{self.whisper_model}")
         model = whisper.load_model(self.whisper_model)
         print("[*] 开始音频转写（首次使用会自动下载模型）...")
@@ -424,6 +477,11 @@ class VideoNoteGenerator:
 
     def _detect_slide_changes(self, video_path: str) -> List[float]:
         """使用 pHash 检测 PPT/Keynote 翻页节点。"""
+        _require_deps(
+            (VideoFileClip, "moviepy"),
+            (Image, "Pillow"),
+            (imagehash, "imagehash"),
+        )
         print("[*] 开始视觉 PPT 翻页检测...")
         clip = VideoFileClip(video_path)
         timestamps: List[float] = [0.0]
@@ -506,13 +564,17 @@ class VideoNoteGenerator:
     def _run_okf_cli(self, args: List[str], cwd: Optional[Path] = None) -> None:
         """调用 okf-note-taking skill 的 CLI helper。"""
         if not OKF_NOTES_CLI.exists():
-            raise RuntimeError(f"未找到 OKF 笔记 CLI：{OKF_NOTES_CLI}")
+            raise RuntimeError(
+                "OKF 笔记包输出需要 okf-note-taking skill，但未找到："
+                f"{OKF_NOTES_CLI}。请安装该 skill，或改用 --output-format okf-doc / pdf。"
+            )
 
         cmd = [sys.executable, str(OKF_NOTES_CLI)] + args
-        try:
-            subprocess.run(cmd, cwd=cwd, check=True)
-        except subprocess.CalledProcessError as exc:
-            print(f"[!] OKF CLI 调用失败：{' '.join(cmd)}\n{exc}", file=sys.stderr)
+        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"OKF CLI 调用失败（{' '.join(cmd)}）：\n{proc.stderr.strip() or proc.stdout.strip()}"
+            )
 
     def _init_okf_bundle(self) -> None:
         """初始化 OKF v0.2 笔记包目录结构。"""
@@ -752,12 +814,7 @@ This reference is linked from topic notes generated from the video.
         title = self.video_title or "Video Notes"
         slug = _safe_filename(title)
         note_path = topics_dir / f"{slug}.md"
-        counter = 1
-        original_slug = slug
-        while note_path.exists():
-            slug = f"{original_slug}-{counter}"
-            note_path = topics_dir / f"{slug}.md"
-            counter += 1
+        # 同一视频重复生成时覆盖同名笔记（幂等），避免产生 <slug>-1、<slug>-2 重复笔记
 
         # 整体时间范围
         if summary:
@@ -1316,20 +1373,26 @@ This reference is linked from topic notes generated from the video.
         else:
             # Phase 1：轻量级字幕探测
             has_subtitle = False
-            try:
-                with sync_playwright() as p:
-                    browser = p.chromium.launch_persistent_context(
-                        self.browser_data_dir,
-                        headless=self.headless,
-                    )
-                    page = browser.pages[0] if browser.pages else browser.new_page()
-                    try:
-                        has_subtitle = self._check_subtitle(page)
-                    finally:
-                        browser.close()
-            except Exception as exc:
-                print(f"[!] 字幕探测阶段出现异常：{exc}", file=sys.stderr)
-                has_subtitle = False
+            if sync_playwright is None:
+                print(
+                    "[!] playwright 未安装，跳过字幕探测。请运行：pip install playwright && playwright install chromium",
+                    file=sys.stderr,
+                )
+            else:
+                try:
+                    with sync_playwright() as p:
+                        browser = p.chromium.launch_persistent_context(
+                            self.browser_data_dir,
+                            headless=self.headless,
+                        )
+                        page = browser.pages[0] if browser.pages else browser.new_page()
+                        try:
+                            has_subtitle = self._check_subtitle(page)
+                        finally:
+                            browser.close()
+                except Exception as exc:
+                    print(f"[!] 字幕探测阶段出现异常：{exc}", file=sys.stderr)
+                    has_subtitle = False
 
             # Phase 2：重量级兜底（仅在 Phase 1 失败时执行）
             if has_subtitle:
@@ -1420,6 +1483,16 @@ def main() -> None:
         help="Whisper 模型大小（默认 base）",
     )
     parser.add_argument(
+        "--corrections",
+        default=None,
+        help="ASR 口误修正表 JSON 路径（{\"错误词\": \"正确词\"}），见 references/asr-corrections.example.json",
+    )
+    parser.add_argument(
+        "--no-headless",
+        action="store_true",
+        help="有头模式运行浏览器（部分站点对无头浏览器反爬/返回 412 时使用）",
+    )
+    parser.add_argument(
         "--notes-dir",
         default=None,
         help="OKF 模式下笔记包输出目录（默认 <output>_notes）",
@@ -1433,6 +1506,11 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    corrections: Optional[Dict[str, str]] = None
+    if args.corrections:
+        with open(args.corrections, "r", encoding="utf-8") as f:
+            corrections = json.load(f)
+
     generator = VideoNoteGenerator(
         video_url=args.url,
         output_path=args.output,
@@ -1443,6 +1521,8 @@ def main() -> None:
         notes_dir=args.notes_dir,
         reuse_existing=args.reuse_existing,
         granularity=args.granularity,
+        summarizer_corrections=corrections,
+        headless=not args.no_headless,
     )
     generator.generate()
 

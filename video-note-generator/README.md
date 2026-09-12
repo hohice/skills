@@ -20,8 +20,11 @@ It uses a dual-track pipeline: first it tries a lightweight online subtitle prob
   - `pdf` — printable study handout with one section per page and a smartly selected screenshot.
 - **Configurable OKF granularity**: choose between a single topic note for the whole video (`video`, default) or one topic note per summary section (`section`).
 - **Smart frame selection**: choose the best screenshot per section by visual change / brightness variance (`visual`) or by OCR text density (`ocr`).
+- **Lazy dependencies**: each phase loads its heavy dependencies (Whisper, Playwright, moviepy) only when needed, so a missing package for one phase doesn't break the others; only `okf` bundle output requires the sibling `okf-note-taking` skill.
+- **Per-video ASR corrections**: pass a `{"typo": "fix"}` JSON table with `--corrections` (see `references/asr-corrections.example.json`); no global correction table is applied by default.
+- **Headed-browser fallback**: `--no-headless` opens a real browser window when sites block headless browsers (412 errors).
 - **LLM-enhanced summary workflow**: generate a prompt file, let an LLM produce better section summaries, then reuse existing intermediate results.
-- **Caching**: downloaded videos are reused from `./downloads/`; intermediate JSON can be reused with `--reuse-existing`.
+- **Caching**: downloaded videos are reused from `./downloads/`; intermediate JSON can be reused with `--reuse-existing`; OKF topic notes are overwritten in place on re-run (idempotent, no `-1` duplicates).
 
 ---
 
@@ -37,6 +40,8 @@ video-note-generator/
     video_note_generator.py        # Main CLI and VideoNoteGenerator class
     frame_selector.py              # Smart screenshot selection strategies
     summarizers.py                 # Rule-based summarizer + LLM prompt builder
+  references/
+    asr-corrections.example.json   # Example --corrections typo-fix table
 ```
 
 ---
@@ -80,7 +85,7 @@ Transforms spoken ASR text into structured knowledge points.
 |-----------|---------|
 | `BaseSummarizer` | Abstract interface for summarizers. |
 | `RuleBasedSummarizer` | Default rule-based summarizer that groups adjacent utterances, filters filler phrases, extracts section titles, and picks up to 3 key points per section. |
-| `clean_asr_text` | Cleans common Chinese ASR mistakes using a built-in correction table. |
+| `clean_asr_text` | Cleans ASR mistakes using an optional per-video correction table passed via `--corrections` (no global table by default). |
 | `build_llm_summary_prompt` | Builds a prompt file that an LLM can use to produce higher-quality `{output}_summary.json`. |
 | `create_summarizer` | Factory that creates the requested summarizer (`rule`). |
 
@@ -167,6 +172,8 @@ For a video titled `<title>` (or an explicit `output` base name):
 | `--granularity {video,section}` | OKF bundle mode only — topic note granularity. Default `video` (one topic note for the whole video); use `section` for one topic note per summary section. |
 | `--frame-selector-method {visual,ocr}` | PDF / okf-doc mode only — frame selection strategy. Default `visual`. |
 | `--whisper-model` | Whisper model size. Default `base`. |
+| `--corrections` | Path to a JSON `{"typo": "fix"}` table applied to the transcript before summarizing. Default: none. |
+| `--no-headless` | Run the browser visibly; helps when sites block headless browsers (412 errors). |
 
 ---
 
@@ -199,7 +206,7 @@ When `--output-format okf` is selected, this skill reuses the `okf-note-taking` 
 ../okf-note-taking/scripts/okf_notes.py
 ```
 
-It calls `init`, `index --regenerate`, and `log` to create and maintain a standard OKF v0.2 bundle.
+It calls `init`, `index --regenerate`, and `log` to create and maintain a standard OKF v0.2 bundle. The helper is loaded lazily, so the other output formats (`okf-doc`, `pdf`) work without the sibling skill installed; without it, `okf` mode fails with a clear error message.
 
 ---
 

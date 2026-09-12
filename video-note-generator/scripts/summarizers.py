@@ -6,11 +6,8 @@
 把 ASR 转写的口语化文本提炼成结构化知识点。
 """
 
-import json
-import os
 import re
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
@@ -31,44 +28,16 @@ class BaseSummarizer(ABC):
         raise NotImplementedError
 
 
-# 默认 ASR 常见口误修正表（可在子类中覆盖）
-_DEFAULT_ASR_CORRECTIONS = {
-    "伯尔巴迪": "Workbody",
-    "webadi": "Workbody",
-    "玩Body": "Workbody",
-    "我Body": "Workbody",
-    "民既论": "零基础",
-    "直信流程": "执行流程",
-    "集于AI": "基于 AI",
-    "将AI": "去 AI 味",
-    "去Ai位": "去 AI 味",
-    "风模型": "AI 模型",
-    "风位鞋": "AI 味",
-    "可付钱": "可复现",
-    "事务剧细": "事无巨细",
-    "提示词起": "提示词写",
-    "疯装": "封装",
-    "文件家": "文件夹",
-    "閱读": "阅读",
-    "吸酿": "批量",
-    "专金": "专业",
-    "靠谷": "靠谱",
-    "杂功": "杂工",
-    "实上": "时长",
-    "叛诺阿": "Hello",
-    "和性能力": "核心能力",
-    "直信": "执行",
-    "集于": "基于",
-    "将解": "讲解",
-    "实践力": "实践案例",
-    "降AI": "去 AI 味",
-}
+def clean_asr_text(
+    text: str, corrections: Optional[Dict[str, str]] = None
+) -> str:
+    """清洗 ASR 转写文本中的口误。
 
-
-def clean_asr_text(text: str, corrections: Optional[Dict[str, str]] = None) -> str:
-    """清洗 ASR 转写文本中的常见口误。"""
-    corrections = corrections or _DEFAULT_ASR_CORRECTIONS
-    for old, new in corrections.items():
+    corrections 为 {"错误词": "正确词"} 映射，默认不内置任何词条——
+    内置全局词表容易误伤其他视频的同音文本，词表应通过 --corrections
+    按视频提供（见 references/asr-corrections.example.json）。
+    """
+    for old, new in (corrections or {}).items():
         text = text.replace(old, new)
     return text
 
@@ -85,15 +54,17 @@ class RuleBasedSummarizer(BaseSummarizer):
         max_gap: float = 8.0,
         min_group_chars: int = 40,
         max_group_chars: int = 160,
+        corrections: Optional[Dict[str, str]] = None,
     ):
         self.max_gap = max_gap
         self.min_group_chars = min_group_chars
         self.max_group_chars = max_group_chars
+        self.corrections = corrections or {}
 
     def _extract_title(self, texts: List[str]) -> str:
         """从合并文本中提取标题：选择长度适中的第一句，过滤常见口头禅。"""
         merged = " ".join(texts).strip()
-        merged = clean_asr_text(merged)
+        merged = clean_asr_text(merged, self.corrections)
         if not merged:
             return "未命名小节"
 
@@ -114,7 +85,7 @@ class RuleBasedSummarizer(BaseSummarizer):
 
     def _split_key_points(self, text: str) -> List[str]:
         """把清洗后的合并文本拆成若干精炼要点句。"""
-        text = clean_asr_text(text)
+        text = clean_asr_text(text, self.corrections)
         # 先按句号、感叹号、问号、分号拆分
         raw = [s.strip() for s in re.split(r"[。！？；]", text) if s.strip()]
 
@@ -129,19 +100,19 @@ class RuleBasedSummarizer(BaseSummarizer):
 
         # 优先选择长度适中、包含核心关键词的片段
         keywords = ["skill", "workbody", "ai", "工具", "使用", "原因", "作用", "结果", "流程", "模板", "稳定"]
-        scored = []
-        for sentence in candidates:
+        scored: List[tuple[int, int, str]] = []
+        for index, sentence in enumerate(candidates):
             length = len(sentence)
             if length < 12 or length > 70:
                 continue
             keyword_score = sum(1 for kw in keywords if kw.lower() in sentence.lower())
             # 短句优先，有核心词的加分
             score = keyword_score * 10 + max(0, 70 - length)
-            scored.append((score, sentence))
+            scored.append((index, score, sentence))
 
-        # 按原始出现顺序排列，保持语义连贯
-        selected = [s for _, s in sorted(scored, reverse=True, key=lambda x: x[0])]
-        return selected[:3]  # 每小节最多 3 个要点
+        # 先按分数取前 3 名，再按原始出现顺序排列，保持语义连贯
+        top = sorted(scored, key=lambda x: x[1], reverse=True)[:3]
+        return [s for _, _, s in sorted(top, key=lambda x: x[0])]
 
     def summarize(self, notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not notes:
@@ -178,7 +149,7 @@ class RuleBasedSummarizer(BaseSummarizer):
             if not contents:
                 continue
 
-            full_text = clean_asr_text(" ".join(contents))
+            full_text = clean_asr_text(" ".join(contents), self.corrections)
             start_time = float(group[0].get("time", 0))
             end_time = float(group[-1].get("time", 0))
 
@@ -211,7 +182,7 @@ def build_llm_summary_prompt(notes: List[Dict[str, Any]]) -> str:
 要求：
 1. 将内容划分为 3-8 个小节，每个小节有一个清晰的标题
 2. 每个小节包含：时间范围、3-5 个核心要点、一段 50-100 字的摘要
-3. 去除口头禅、互动话术和重复内容，修正 ASR 口误（如"伯尔巴迪"应为"Workbody"、"将AI"应为"去 AI 味"）
+3. 去除口头禅、互动话术和重复内容，修正明显的 ASR 口误（如常见同音错字、中英文专名误转）
 4. 保留专业术语和关键概念
 5. 输出必须是合法的 JSON 数组，格式如下，不要包含任何 markdown 代码块标记：
 
@@ -231,9 +202,11 @@ def build_llm_summary_prompt(notes: List[Dict[str, Any]]) -> str:
 """
 
 
-def create_summarizer(method: str = "rule") -> BaseSummarizer:
+def create_summarizer(
+    method: str = "rule", corrections: Optional[Dict[str, str]] = None
+) -> BaseSummarizer:
     """工厂函数，按名称创建摘要器。"""
     method = method.lower()
     if method == "rule":
-        return RuleBasedSummarizer()
+        return RuleBasedSummarizer(corrections=corrections)
     raise ValueError(f"不支持的摘要方法：{method}，当前仅支持 rule（LLM 摘要通过 prompt 文件由调用方实现）")

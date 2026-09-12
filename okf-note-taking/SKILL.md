@@ -26,6 +26,7 @@ Use this skill when the user says things like:
 - “Create an OKF bundle / initialize my notes.”
 - “Attach this image to my note.”
 - “Link these two notes.”
+- “Move/rename this note.”
 - “Regenerate the index.”
 - “Check my notes for format issues.”
 - “Set up Git LFS.”
@@ -91,10 +92,16 @@ python ${KIMI_SKILL_DIR}/scripts/okf_notes.py attach topics/backpropagation.md \
 python ${KIMI_SKILL_DIR}/scripts/okf_notes.py link topics/backpropagation.md \
     --to topics/neural-networks.md
 
+# Move/rename a note (fixes links, indexes, and log automatically)
+python ${KIMI_SKILL_DIR}/scripts/okf_notes.py move topics/backpropagation.md \
+    topics/optimization/backpropagation.md
+
 # Regenerate indexes and check
 python ${KIMI_SKILL_DIR}/scripts/okf_notes.py index --regenerate
 python ${KIMI_SKILL_DIR}/scripts/okf_notes.py check
 ```
+
+After any batch of edits, run `check` and fix its warnings before reporting success.
 
 ---
 
@@ -117,9 +124,13 @@ Each workflow is detailed in `references/WORKFLOW.md`. Summaries below:
 4. Write frontmatter and body with links.
 5. Update `index.md` and `log.md`.
 
-### 5.3 Link notes
+## 5.3 Link notes
 
 Insert a bundle-relative link in `Related notes`, `Prerequisites`, or `See also`. Dangling links are allowed.
+
+### 5.3b Move or rename a note
+
+Use the CLI helper: `okf_notes.py move <from> <to>`. It renames the file, moves its asset directory (`assets/<old-path>/` → `assets/<new-path>/`), rewrites relative links inside the moved note, repoints bundle-absolute links from other notes, updates both directory indexes, and appends a log entry.
 
 ### 5.4 Attach an image
 
@@ -193,6 +204,6 @@ Backpropagation computes gradients by applying the chain rule in reverse.
 
 ## 9. Companion CLI tool
 
-The helper `scripts/okf_notes.py` provides: `init`, `lfs-setup`, `new`, `link`, `attach`, `index`, `check`, `log`.
+The helper `scripts/okf_notes.py` provides: `init`, `lfs-setup`, `new`, `link`, `move`, `attach`, `index`, `check`, `log`.
 
 For command details see `references/COMMANDS.md`.

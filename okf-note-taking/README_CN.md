@@ -12,6 +12,7 @@
 - **Bundle 脚手架**：通过 `init` 命令创建 `topics/`、`references/`、`computations/` 及其索引。
 - **概念创建**：通过 `new` 命令创建笔记，并自动更新最近的 `index.md` 和 `log.md`。
 - **笔记关联**：通过 `link` 命令在 `# Related notes` 中插入 bundle 相对路径链接。
+- **移动/重命名**：通过 `move` 命令重命名笔记、迁移其资源目录、重写链接并更新索引和日志。
 - **图片附加**：通过 `attach` 命令将媒体复制到 `assets/`，并可选择记录到 frontmatter 中。
 - **索引重建**：通过 `index` 命令保持目录列表最新。
 - **合规检查**：通过 `check` 命令检查 frontmatter、脚注、本地图片和保留文件名。
@@ -28,7 +29,7 @@ okf-note-taking/
   README_CN.md          # 中文版说明（本文件）
   pyproject.toml        # Python 包元数据
   scripts/
-    okf_notes.py        # CLI 辅助工具（init、new、link、attach、index、check、log、lfs-setup）
+    okf_notes.py        # CLI 辅助工具（init、new、link、move、attach、index、check、log、lfs-setup）
   references/
     WORKFLOW.md         # 详细的分步工作流
     COMMANDS.md         # CLI 命令参考
@@ -155,7 +156,7 @@ okf-notes check
 - Python >= 3.11
 - PyYAML >= 6.0
 
-当直接通过 `python scripts/okf_notes.py` 调用时，`init`、`new`、`log` 和 `attach` 核心命令只需要 Python 标准库。`link`、`index` 和 `check` 命令需要 PyYAML。
+当直接通过 `python scripts/okf_notes.py` 调用时，`init`、`new`、`log` 和 `attach` 核心命令只需要 Python 标准库。`link`、`move`、`index` 和 `check` 命令需要 PyYAML。
 
 ---
 

@@ -20,8 +20,11 @@
   - `pdf` — 可打印的学习讲义，每页一个小节并附带智能选图。
 - **可配置的 OKF 粒度**：选择整视频一个主题文档（`video`，默认）或每个摘要小节一个主题文档（`section`）。
 - **智能选图**：通过画面变化/亮度方差（`visual`）或 OCR 文字密度（`ocr`）为每个小节挑选最佳截图。
+- **依赖惰性加载**：各阶段仅在需要时加载重量级依赖（Whisper、Playwright、moviepy），某个阶段缺包不会影响其他阶段；只有 `okf` 笔记包输出依赖 `okf-note-taking` skill。
+- **按视频的 ASR 修正**：通过 `--corrections` 传入 `{"错误词": "正确词"}` JSON 词表（见 `references/asr-corrections.example.json`）；默认不再应用任何全局修正表。
+- **有头浏览器回退**：`--no-headless` 打开真实浏览器窗口，应对站点对无头浏览器的反爬（412 错误）。
 - **LLM 增强摘要工作流**：生成 prompt 文件，由 LLM 产出更优的小节摘要，再复用中间结果重新生成最终输出。
-- **缓存机制**：已下载的视频从 `./downloads/` 复用；中间 JSON 可通过 `--reuse-existing` 复用。
+- **缓存机制**：已下载的视频从 `./downloads/` 复用；中间 JSON 可通过 `--reuse-existing` 复用；OKF 主题笔记重复生成时原地覆盖（幂等，不再产生 `-1` 重复笔记）。
 
 ---
 
@@ -37,6 +40,8 @@ video-note-generator/
     video_note_generator.py        # 主 CLI 与 VideoNoteGenerator 类
     frame_selector.py              # 智能截图选择策略
     summarizers.py                 # 基于规则的摘要器 + LLM prompt 生成器
+  references/
+    asr-corrections.example.json   # --corrections 口误修正表示例
 ```
 
 ---
@@ -80,7 +85,7 @@ video-note-generator/
 |------|------|
 | `BaseSummarizer` | 摘要器抽象接口。 |
 | `RuleBasedSummarizer` | 默认基于规则的摘要器。合并相邻语句、过滤口头禅、提取小节标题，并为每小节挑选最多 3 个要点。 |
-| `clean_asr_text` | 使用内置修正表清理常见中文 ASR 口误。 |
+| `clean_asr_text` | 使用 `--corrections` 传入的按视频修正表清理 ASR 口误（默认不应用全局修正表）。 |
 | `build_llm_summary_prompt` | 构建 prompt 文件，供 LLM 生成更高质量的 `{output}_summary.json`。 |
 | `create_summarizer` | 工厂函数，按名称创建摘要器（目前仅 `rule`）。 |
 
@@ -167,6 +172,8 @@ python3.12 scripts/video_note_generator.py "https://www.bilibili.com/video/BVxxx
 | `--granularity {video,section}` | 仅 OKF 笔记包模式 — 主题文档粒度。默认 `video`（整视频一个主题文档）；使用 `section` 可为每个摘要小节生成一个主题文档。 |
 | `--frame-selector-method {visual,ocr}` | 仅 PDF / okf-doc 模式 — 选图策略。默认 `visual`。 |
 | `--whisper-model` | Whisper 模型大小。默认 `base`。 |
+| `--corrections` | 转写文本摘要前应用的 JSON `{"错误词": "正确词"}` 修正表路径。默认无。 |
+| `--no-headless` | 有头模式运行浏览器，应对站点对无头浏览器的反爬（412 错误）。 |
 
 ---
 
@@ -199,7 +206,7 @@ python3.12 scripts/video_note_generator.py "https://www.bilibili.com/video/BVxxx
 ../okf-note-taking/scripts/okf_notes.py
 ```
 
-它会调用 `init`、`index --regenerate` 和 `log` 命令来创建并维护标准 OKF v0.2 笔记包。
+它会调用 `init`、`index --regenerate` 和 `log` 命令来创建并维护标准 OKF v0.2 笔记包。该 helper 按需惰性加载，因此其他输出格式（`okf-doc`、`pdf`）无需安装 sibling skill 即可运行；未安装时 `okf` 模式会给出明确的错误提示。
 
 ---
 

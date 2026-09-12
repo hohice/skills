@@ -104,6 +104,35 @@ Backpropagation computes gradients by applying the chain rule in reverse.
 
 ---
 
+## 3b. Move or rename a note
+
+### Steps
+
+1. Run `okf-notes move <from> <to>` (or `python scripts/okf_notes.py move ...`).
+2. The helper renames the concept file and:
+   - moves its asset directory `assets/<old-path-without-.md>/` to `assets/<new-path-without-.md>/`,
+   - recomputes relative links inside the moved note (directory depth may change),
+   - repoints bundle-absolute links to the old location from every other note,
+   - removes the entry from the old directory `index.md` and adds one to the new directory `index.md`,
+   - appends a **Move** entry to the root `log.md`.
+3. Report the new path and any files whose links were rewritten.
+
+### Input / output example
+
+Input: "Rename topics/backpropagation.md to topics/optimization/backpropagation.md."
+
+```bash
+okf-notes move topics/backpropagation.md topics/optimization/backpropagation.md
+```
+
+### Boundary cases
+
+- Refuses to overwrite: if the destination path already exists, it errors out.
+- If a note links to the moved concept relatively (e.g. `../topics/a.md`), prefer bundle-absolute links (`/topics/a.md`) everywhere; relative links from other notes to the moved concept are not rewritten.
+- If the new asset directory already exists, assets are left in place and only document links are depth-adjusted.
+
+---
+
 ## 4. Attach an image
 
 ### Steps
