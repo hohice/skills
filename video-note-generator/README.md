@@ -24,7 +24,7 @@ It uses a dual-track pipeline: first it tries a lightweight online subtitle prob
 - **Per-video ASR corrections**: pass a `{"typo": "fix"}` JSON table with `--corrections` (see `references/asr-corrections.example.json`); no global correction table is applied by default.
 - **Headed-browser fallback**: `--no-headless` opens a real browser window when sites block headless browsers (412 errors).
 - **LLM-enhanced summary workflow**: generate a prompt file, let an LLM produce better section summaries, then reuse existing intermediate results.
-- **Caching**: downloaded videos are reused from `./downloads/`; intermediate JSON can be reused with `--reuse-existing`; OKF topic notes are overwritten in place on re-run (idempotent, no `-1` duplicates).
+- **Caching**: each video's download cache, screenshots, and intermediate JSON live in a per-video topic directory under `--temp-dir` (default `./tmp/<title>/`) and are reused across runs; `--reuse-existing` reuses `notes.json`; OKF topic notes are overwritten in place on re-run (idempotent, no `-1` duplicates).
 
 ---
 
@@ -86,7 +86,7 @@ Transforms spoken ASR text into structured knowledge points.
 | `BaseSummarizer` | Abstract interface for summarizers. |
 | `RuleBasedSummarizer` | Default rule-based summarizer that groups adjacent utterances, filters filler phrases, extracts section titles, and picks up to 3 key points per section. |
 | `clean_asr_text` | Cleans ASR mistakes using an optional per-video correction table passed via `--corrections` (no global table by default). |
-| `build_llm_summary_prompt` | Builds a prompt file that an LLM can use to produce higher-quality `{output}_summary.json`. |
+| `build_llm_summary_prompt` | Builds a prompt file that an LLM can use to produce higher-quality `notes_summary.json` (in the topic temp directory). |
 | `create_summarizer` | Factory that creates the requested summarizer (`rule`). |
 
 ---
@@ -138,13 +138,24 @@ python3.12 scripts/video_note_generator.py "https://www.bilibili.com/video/BVxxx
 
 ## Output files
 
-For a video titled `<title>` (or an explicit `output` base name):
+For a video titled `<title>` (or an explicit `output` base name).
+
+**Intermediate artifacts** — under `<temp-dir>/<title>/` (default `./tmp/<title>/`), reused across runs of the same video:
 
 | File / Directory | Description |
 |------------------|-------------|
-| `<title>.json` | Raw slide/time/content notes. |
-| `<title>_summary.json` | Structured section summaries. |
-| `<title>_llm_prompt.md` | Prompt you can feed to an LLM for a better summary. |
+| `notes.json` | Raw slide/time/content notes. |
+| `notes_summary.json` | Structured section summaries. |
+| `notes_llm_prompt.md` | Prompt you can feed to an LLM for a better summary. |
+| `downloads/` | This video's yt-dlp download cache. |
+| `screenshots/` | Pool of extracted video frames. |
+
+Playwright browser session data is shared across videos at `<temp-dir>/browser_data/`.
+
+**Final outputs** — in the working directory:
+
+| File / Directory | Description |
+|------------------|-------------|
 | `<title>_okf.md` + `<title>_okf_assets/` | Output for `--output-format okf-doc` (default). |
 | `<title>_notes/` | Output for `--output-format okf`. Default layout has one topic note for the whole video; with `--granularity section` there is one topic note per summary section. |
 | `<title>_study_notes.pdf` | Output for `--output-format pdf`. |
@@ -153,9 +164,9 @@ For a video titled `<title>` (or an explicit `output` base name):
 
 ## LLM-enhanced summary workflow
 
-1. Run the script normally to create `output.json` and `output_llm_prompt.md`.
-2. Read `output_llm_prompt.md` and use your LLM to produce a valid JSON array in the format shown in that file.
-3. Write the JSON array to `output_summary.json`.
+1. Run the script normally to create `<temp-dir>/<title>/notes.json` and `<temp-dir>/<title>/notes_llm_prompt.md` (default `./tmp/<title>/`).
+2. Read `notes_llm_prompt.md` and use your LLM to produce a valid JSON array in the format shown in that file.
+3. Write the JSON array to `notes_summary.json` in the same topic directory.
 4. Re-run the script with `--reuse-existing` (and the same `--output-format`) to regenerate the final output from the new summary.
 
 ---
@@ -165,9 +176,10 @@ For a video titled `<title>` (or an explicit `output` base name):
 | Argument | Description |
 |----------|-------------|
 | `url` | Video URL (required). |
-| `output` | Output JSON path. Defaults to `<video-title>.json`. |
+| `output` | Base name for the final output files and the temp topic directory. Defaults to the video title (safe slug). |
 | `--output-format {okf,okf-doc,pdf}` | Final output format. Default `okf-doc`. |
-| `--reuse-existing` | Skip subtitle probe and ASR if `output.json` exists; regenerate summary and final output only. |
+| `--temp-dir` | Root directory for intermediate artifacts, relative to the working directory; each video gets a topic subdirectory (`<temp-dir>/<base>/`). Default `./tmp`. |
+| `--reuse-existing` | Skip subtitle probe and ASR if the topic directory's `notes.json` exists; regenerate summary and final output only. |
 | `--notes-dir` | OKF bundle mode only — custom bundle output directory. |
 | `--granularity {video,section}` | OKF bundle mode only — topic note granularity. Default `video` (one topic note for the whole video); use `section` for one topic note per summary section. |
 | `--frame-selector-method {visual,ocr}` | PDF / okf-doc mode only — frame selection strategy. Default `visual`. |

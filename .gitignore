@@ -16,3 +16,6 @@ build/
 # IDEs
 .vscode/
 .idea/
+
+# video-note-generator scratch data
+tmp/

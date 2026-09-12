@@ -24,7 +24,7 @@
 - **按视频的 ASR 修正**：通过 `--corrections` 传入 `{"错误词": "正确词"}` JSON 词表（见 `references/asr-corrections.example.json`）；默认不再应用任何全局修正表。
 - **有头浏览器回退**：`--no-headless` 打开真实浏览器窗口，应对站点对无头浏览器的反爬（412 错误）。
 - **LLM 增强摘要工作流**：生成 prompt 文件，由 LLM 产出更优的小节摘要，再复用中间结果重新生成最终输出。
-- **缓存机制**：已下载的视频从 `./downloads/` 复用；中间 JSON 可通过 `--reuse-existing` 复用；OKF 主题笔记重复生成时原地覆盖（幂等，不再产生 `-1` 重复笔记）。
+- **缓存机制**：每个视频的下载缓存、截图和中间 JSON 都存放在 `--temp-dir`（默认 `./tmp`）下按视频划分的主题目录（默认 `./tmp/<title>/`）中，可跨运行复用；`--reuse-existing` 复用 `notes.json`；OKF 主题笔记重复生成时原地覆盖（幂等，不再产生 `-1` 重复笔记）。
 
 ---
 
@@ -86,7 +86,7 @@ video-note-generator/
 | `BaseSummarizer` | 摘要器抽象接口。 |
 | `RuleBasedSummarizer` | 默认基于规则的摘要器。合并相邻语句、过滤口头禅、提取小节标题，并为每小节挑选最多 3 个要点。 |
 | `clean_asr_text` | 使用 `--corrections` 传入的按视频修正表清理 ASR 口误（默认不应用全局修正表）。 |
-| `build_llm_summary_prompt` | 构建 prompt 文件，供 LLM 生成更高质量的 `{output}_summary.json`。 |
+| `build_llm_summary_prompt` | 构建 prompt 文件，供 LLM 生成更高质量的 `notes_summary.json`（位于主题临时目录）。 |
 | `create_summarizer` | 工厂函数，按名称创建摘要器（目前仅 `rule`）。 |
 
 ---
@@ -138,13 +138,24 @@ python3.12 scripts/video_note_generator.py "https://www.bilibili.com/video/BVxxx
 
 ## 输出文件
 
-对于标题为 `<title>` 的视频（或显式指定的 `output` 基本名）：
+对于标题为 `<title>` 的视频（或显式指定的 `output` 基本名）。
+
+**中间产物** — 位于 `<temp-dir>/<title>/`（默认 `./tmp/<title>/`），跨运行复用：
 
 | 文件 / 目录 | 说明 |
 |------------|------|
-| `<title>.json` | 原始 slide/时间/内容笔记。 |
-| `<title>_summary.json` | 结构化小节摘要。 |
-| `<title>_llm_prompt.md` | 可喂给 LLM 以生成更优摘要的 prompt。 |
+| `notes.json` | 原始 slide/时间/内容笔记。 |
+| `notes_summary.json` | 结构化小节摘要。 |
+| `notes_llm_prompt.md` | 可喂给 LLM 以生成更优摘要的 prompt。 |
+| `downloads/` | 该视频的 yt-dlp 下载缓存。 |
+| `screenshots/` | 抽取的视频帧截图池。 |
+
+Playwright 浏览器会话数据跨视频共享，位于 `<temp-dir>/browser_data/`。
+
+**最终输出** — 位于运行目录（cwd）：
+
+| 文件 / 目录 | 说明 |
+|------------|------|
 | `<title>_okf.md` + `<title>_okf_assets/` | `--output-format okf-doc`（默认）的输出。 |
 | `<title>_notes/` | `--output-format okf` 的输出。默认布局为整视频一个主题文档；使用 `--granularity section` 时为每个摘要小节一个主题文档。 |
 | `<title>_study_notes.pdf` | `--output-format pdf` 的输出。 |
@@ -153,9 +164,9 @@ python3.12 scripts/video_note_generator.py "https://www.bilibili.com/video/BVxxx
 
 ## LLM 增强摘要工作流
 
-1. 正常运行脚本，生成 `output.json` 和 `output_llm_prompt.md`。
-2. 读取 `output_llm_prompt.md`，使用你的 LLM 生成符合该文件所示格式的 JSON 数组。
-3. 将 JSON 数组写入 `output_summary.json`。
+1. 正常运行脚本，生成 `<temp-dir>/<title>/notes.json` 和 `<temp-dir>/<title>/notes_llm_prompt.md`（默认 `./tmp/<title>/`）。
+2. 读取 `notes_llm_prompt.md`，使用你的 LLM 生成符合该文件所示格式的 JSON 数组。
+3. 将 JSON 数组写入同一主题目录下的 `notes_summary.json`。
 4. 使用 `--reuse-existing`（和相同的 `--output-format`）重新运行脚本，以从新的摘要重新生成最终输出。
 
 ---
@@ -165,9 +176,10 @@ python3.12 scripts/video_note_generator.py "https://www.bilibili.com/video/BVxxx
 | 参数 | 说明 |
 |------|------|
 | `url` | 视频 URL（必需）。 |
-| `output` | 输出 JSON 路径。默认为 `<video-title>.json`。 |
+| `output` | 最终输出文件的基本名及临时主题目录名。默认为视频标题（安全文件名 slug）。 |
 | `--output-format {okf,okf-doc,pdf}` | 最终输出格式。默认 `okf-doc`。 |
-| `--reuse-existing` | 如果 `output.json` 已存在，跳过字幕探测和 ASR；仅重新生成摘要和最终输出。 |
+| `--temp-dir` | 中间产物根目录（相对于运行目录），每个视频在其下拥有一个主题子目录（`<temp-dir>/<base>/`）。默认 `./tmp`。 |
+| `--reuse-existing` | 如果主题目录下的 `notes.json` 已存在，跳过字幕探测和 ASR；仅重新生成摘要和最终输出。 |
 | `--notes-dir` | 仅 OKF 笔记包模式 — 自定义 bundle 输出目录。 |
 | `--granularity {video,section}` | 仅 OKF 笔记包模式 — 主题文档粒度。默认 `video`（整视频一个主题文档）；使用 `section` 可为每个摘要小节生成一个主题文档。 |
 | `--frame-selector-method {visual,ocr}` | 仅 PDF / okf-doc 模式 — 选图策略。默认 `visual`。 |

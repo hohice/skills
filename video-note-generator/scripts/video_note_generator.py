@@ -163,51 +163,55 @@ class VideoNoteGenerator:
         self,
         video_url: str,
         output_path: Optional[str] = None,
-        browser_data_dir: str = "./browser_data",
+        temp_root: str = "./tmp",
         whisper_model: str = "base",
         slide_hash_threshold: int = 5,
         sample_interval: int = 1,
         headless: bool = True,
         subtitle_timeout: int = 10,
-        download_dir: str = "./downloads",
         summarizer_method: str = "rule",
         output_format: str = "okf-doc",
         notes_dir: Optional[str] = None,
         frame_selector_method: str = "visual",
-        screenshot_dir: str = "./screenshots",
         reuse_existing: bool = False,
         granularity: str = "video",
         summarizer_corrections: Optional[Dict[str, str]] = None,
     ):
         self.video_url = video_url
         self.output_path = output_path
-        self.browser_data_dir = browser_data_dir
+        self.temp_root = Path(temp_root)
         self.whisper_model = whisper_model
         self.slide_hash_threshold = slide_hash_threshold
         self.sample_interval = sample_interval
         self.headless = headless
         self.subtitle_timeout = subtitle_timeout
-        self.download_dir = download_dir
         self.summarizer_method = summarizer_method
         self.output_format = output_format.lower()
         self.frame_selector_method = frame_selector_method
-        self.screenshot_dir = Path(screenshot_dir)
         self.reuse_existing = reuse_existing
         self.granularity = granularity.lower()
         self._notes_dir_override = notes_dir
         self._summarizer_corrections = summarizer_corrections or {}
+
+        # 浏览器会话数据跨主题共享，直接放在临时根目录下；
+        # 其余临时产物在 _resolve_output_paths 中按主题归入子目录。
+        self.browser_data_dir = str(self.temp_root / "browser_data")
 
         self.subtitle_data: Optional[List[Dict[str, Any]]] = None
         self.video_path: Optional[str] = None
         self.video_title: Optional[str] = None
 
         # 派生输出路径，在获取到视频标题后解析
+        self.topic_dir: Optional[Path] = None
+        self._output_base: Optional[Path] = None
         self.summary_path: Optional[str] = None
         self.pdf_path: Optional[str] = None
         self.llm_prompt_path: Optional[str] = None
         self.okf_bundle_dir: Optional[Path] = None
         self.okf_doc_path: Optional[Path] = None
         self.okf_doc_assets_dir: Optional[Path] = None
+        self.download_dir: Optional[str] = None
+        self.screenshot_dir: Optional[Path] = None
 
         self._summarizer: Optional[summarizers.BaseSummarizer] = None
         self._frame_selector: Optional[frame_selector.BaseFrameSelector] = None
@@ -279,22 +283,34 @@ class VideoNoteGenerator:
         return self.video_title
 
     def _resolve_output_paths(self, title: str) -> None:
-        """根据视频标题或用户指定路径解析所有输出文件路径。"""
-        if self.output_path is None:
-            base = _safe_filename(title) or "notes"
-            self.output_path = base + ".json"
+        """根据视频标题或用户指定路径解析所有输出文件路径。
 
-        output_base = Path(self.output_path).with_suffix("")
-        self.summary_path = str(output_base) + "_summary.json"
-        self.pdf_path = str(output_base) + "_study_notes.pdf"
-        self.llm_prompt_path = str(output_base) + "_llm_prompt.md"
+        中间产物（原始笔记、摘要、LLM prompt、下载的视频、截图）统一放入
+        临时根目录下按主题命名的子目录；最终输出仍留在当前工作目录。
+        """
+        if self.output_path is None:
+            output_base = Path(_safe_filename(title) or "notes")
+        else:
+            output_base = Path(self.output_path).with_suffix("")
+        self._output_base = output_base
+
+        topic_dir = self.temp_root / output_base.name
+        self.topic_dir = topic_dir
+        self.output_path = str(topic_dir / "notes.json")
+        self.summary_path = str(topic_dir / "notes_summary.json")
+        self.llm_prompt_path = str(topic_dir / "notes_llm_prompt.md")
+        self.download_dir = str(topic_dir / "downloads")
+        self.screenshot_dir = topic_dir / "screenshots"
+
+        output_base_str = str(output_base)
+        self.pdf_path = output_base_str + "_study_notes.pdf"
         self.okf_bundle_dir = (
             Path(self._notes_dir_override)
             if self._notes_dir_override
-            else Path(str(output_base) + "_notes")
+            else Path(output_base_str + "_notes")
         )
-        self.okf_doc_path = Path(str(output_base) + "_okf.md")
-        self.okf_doc_assets_dir = Path(str(output_base) + "_okf_assets")
+        self.okf_doc_path = Path(output_base_str + "_okf.md")
+        self.okf_doc_assets_dir = Path(output_base_str + "_okf_assets")
 
     def _get_summarizer(self) -> summarizers.BaseSummarizer:
         if self._summarizer is None:
@@ -1194,7 +1210,7 @@ This reference is linked from topic notes generated from the video.
             print("[!] 未找到中文字体，跳过 PDF 生成")
             return
 
-        self.screenshot_dir.mkdir(exist_ok=True)
+        self.screenshot_dir.mkdir(parents=True, exist_ok=True)
 
         class _PDF(FPDF):
             def header(self):
@@ -1359,7 +1375,8 @@ This reference is linked from topic notes generated from the video.
         video_title = self._get_video_title()
         self._resolve_output_paths(video_title)
         print(f"[*] 视频标题：{video_title}")
-        print(f"[*] 输出前缀：{Path(self.output_path).with_suffix('')}")
+        print(f"[*] 输出前缀：{self._output_base}")
+        print(f"[*] 临时目录：{self.topic_dir}")
 
         # 如果开启复用且 notes.json 已存在，跳过 Phase 1/2
         if self.reuse_existing and os.path.exists(self.output_path):
@@ -1453,7 +1470,13 @@ def main() -> None:
         description="智能双轨视频笔记生成器",
     )
     parser.add_argument("url", help="视频 URL")
-    parser.add_argument("output", nargs="?", default=None, help="输出 JSON 路径（默认使用视频标题命名）")
+    parser.add_argument("output", nargs="?", default=None, help="最终输出基本名（默认使用视频标题命名），同时用作临时主题目录名")
+    parser.add_argument(
+        "--temp-dir",
+        default="./tmp",
+        help="中间产物根目录（默认 ./tmp）；每个视频在其下拥有以输出基本名命名的主题目录，"
+        "存放 notes.json、notes_summary.json、notes_llm_prompt.md、downloads/ 和 screenshots/",
+    )
     parser.add_argument(
         "--reuse-existing",
         action="store_true",
@@ -1514,6 +1537,7 @@ def main() -> None:
     generator = VideoNoteGenerator(
         video_url=args.url,
         output_path=args.output,
+        temp_root=args.temp_dir,
         summarizer_method=args.summarizer_method,
         output_format=args.output_format,
         frame_selector_method=args.frame_selector_method,
